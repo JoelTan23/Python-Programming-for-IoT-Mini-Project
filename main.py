@@ -30,6 +30,8 @@ GPIO.setmode(GPIO.BCM)
 GPIO.setup(LED_PIN, GPIO.OUT)
 GPIO.output(LED_PIN, GPIO.LOW)
 
+BUZZER_PIN = 18
+
 # Keypad setup
 ROWS = [18, 23, 24, 25]  # GPIO pins for the rows
 COLS = [4, 17, 27, 22]   # GPIO pins for the columns
@@ -72,11 +74,12 @@ def home():
     else:
         url = "/system_on"
 
+    # Code for testing
     url="/system_on"
     system_status_str="on"
-    print(f"System Status: {system_status_str}, URL: {url}")
+
     return render_template('index.html', system_status=system_status_str,url=url)
-    
+
 @app.route('/system_off')
 def system_off():
     global system_status 
@@ -105,6 +108,12 @@ def exceeded_useage():
     global usage_status
     usage_status = "Exceeded"
     message = "Airconditioner Usage Exceeded! Please turn off airconditioner as soon as possible. Turn off airconditioner via this link: 127.0.0.1:5500 "
+    telegram_bot(message)
+    while usage_status != 'Ok':
+        GPIO(LED_PIN,GPIO.HIGH)
+        GPIO(BUZZER_PIN,GPIO.HIGH)
+        sleep(5)
+
     
 def display_lcd(string,pos1,pos2):
     LCD = I2C_LCD_driver.lcd() #instantiate an lcd object, call it LCD
@@ -181,9 +190,14 @@ def upload_data():
 # Keypad_Interrupt_Thread
 def keypad_interupt():
     # Display initial message
-    print("Press 1 for elapsed time")
-    print("Press 2 for humidity and temperature")
-    
+  
+    for i in range(10):
+        display_lcd("Press 1 for elapsed time", 1, 1)
+        display_lcd("Press 2 for humidity and temperature", 2, 2)
+        sleep(5)
+        display_lcd("Press 3 for On/OFF", 1, 1)
+        sleep(5)
+        
     while True:
         key = get_key()
         if key:
