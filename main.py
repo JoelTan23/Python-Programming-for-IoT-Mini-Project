@@ -4,6 +4,7 @@
 # Imports
 import Adafruit_DHT
 import RPi.GPIO as GPIO
+from time import sleep
 import time
 import threading
 import requests
@@ -13,7 +14,6 @@ import json
 from flask import Flask, render_template,request,url_for
 
 from telegrambot import telegram_bot 
-
 
 ##########################################################################################################
 # Set up
@@ -29,6 +29,21 @@ LED_PIN = 27
 GPIO.setmode(GPIO.BCM)
 GPIO.setup(LED_PIN, GPIO.OUT)
 GPIO.output(LED_PIN, GPIO.LOW)
+
+# Keypad setup
+ROWS = [18, 23, 24, 25]  # GPIO pins for the rows
+COLS = [4, 17, 27, 22]   # GPIO pins for the columns
+keys = [['1', '2', '3', 'A'],
+    ['4', '5', '6', 'B'],
+    ['7', '8', '9', 'C'],
+    ['*', '0', '#', 'D']]
+
+for row in ROWS:
+    GPIO.setup(row, GPIO.OUT)
+    GPIO.output(row, GPIO.HIGH) 
+
+for col in COLS:
+    GPIO.setup(col, GPIO.IN, pull_up_down=GPIO.PUD_UP)
 
 ##########################################################################################################
 # Variables 
@@ -48,15 +63,19 @@ usage_status = "Ok"
 def home():
     global system_status
     if system_status == 1:
-        system_status ="on"
+        system_status_str ="on"
     else:
-        system_status="off"
+        system_status_str="off"
 
     if system_status == "on":
         url = "/system_off"
     else:
         url = "/system_on"
-    return render_template('index.html', system_status=system_status,url = url)
+
+    url="/system_on"
+    system_status_str="on"
+    print(f"System Status: {system_status_str}, URL: {url}")
+    return render_template('index.html', system_status=system_status_str,url=url)
     
 @app.route('/system_off')
 def system_off():
@@ -75,7 +94,6 @@ def system_on():
     return render_template("system_on.html",elapsed_time=elapsed_time)
 
 ###########################################################################################################
-
 # Functions
 
 # Function to check if air conditioner is on
@@ -88,9 +106,35 @@ def exceeded_useage():
     usage_status = "Exceeded"
     message = "Airconditioner Usage Exceeded! Please turn off airconditioner as soon as possible. Turn off airconditioner via this link: 127.0.0.1:5500 "
     
+def display_lcd(string,pos1,pos2):
+    LCD = I2C_LCD_driver.lcd() #instantiate an lcd object, call it LCD
+    LCD.backlight(1) #turn backlight on
+    LCD.lcd_display_string("String", pos1,pos2)
 
-# Function for the main timer feature
-# AC Timer Thread
+def clear_lcd():
+    LCD = I2C_LCD_driver.lcd()
+    LCD.lcd_clear()
+
+
+def get_key():
+    key_pressed = None
+    for row in range(4):
+        GPIO.output(ROWS[row], GPIO.LOW)
+        for col in range(4):
+            if GPIO.input(COLS[col]) == 0:
+                key_pressed = keys[row][col]
+                while GPIO.input(COLS[col]) == 0:
+                    sleep(0.1)
+                break
+        GPIO.output(ROWS[row], GPIO.HIGH)
+        if key_pressed:
+            break
+    return key_pressed
+
+
+##########################################################################################################
+# Threads
+# Airconditioner_Timer_T
 def airconditioner_timer():
     global elapsed_time
     global ac_on_start_time
@@ -107,7 +151,7 @@ def airconditioner_timer():
             #Calls on the function to check if the airconditioner is on
             if is_air_conditioner_on(humidity, temperature):
                 #Checks that the start timer is 0
-                if ac_on_start_time is 0:
+                if ac_on_start_time == 0:
                     ac_on_start_time = time.time()  # Start the timer
                 else:
                     elapsed_time = time.time() - ac_on_start_time
@@ -126,11 +170,6 @@ def airconditioner_timer():
             print("Failed to retrieve data from humidity sensor")
         time.sleep(2)  # Wait for 2 seconds before the next reading
 
-# Keypad Interrupt Thread
-def keypad_interrupt():
-   # Place Holder Code
-    print("hi")
-
 # Upload_Data_Thread
 def upload_data():
     # Upload data to thinkspeak
@@ -139,27 +178,51 @@ def upload_data():
         resp = requests.get("https://api.thingspeak.com/update?api_key=Q5WYV1VLWZQGPWBR&field1=0",format(temperature,humidity))
         time.sleep(20) # Need to sleep for at least 20
 
-def display_lcd(string,pos1,pos2):
-    LCD = I2C_LCD_driver.lcd() #instantiate an lcd object, call it LCD
-    LCD.backlight(1) #turn backlight on
-    LCD.lcd_display_string("String", pos1,pos2)
+# Keypad_Interrupt_Thread
+def keypad_interupt():
+    # Display initial message
+    print("Press 1 for elapsed time")
+    print("Press 2 for humidity and temperature")
+    
+    while True:
+        key = get_key()
+        if key:
+            if key == '1':
+                display_lcd(str(elapsed_time,1,1))
+            elif key == '2':
+                 # Shows previous readings
+                resp=requests.get("https://api.thingspeak.com/channels/2591947/feeds.json?api_key=XUXD1E5DUX4K5W4T&results=2")  
+                print(resp.text)
+                previous_readings = json.loads(resp.text) # Converts the downloaded data from the cloud from json
+                # Prints into the terminal / serial monitor
+                for x in range(10):
+                    print("Previous Reading ",x,": temperature =",previous_readings["feeds"][x]["field1"],", humidity =",previous_readings["feeds"][x]["field2"])
 
-def clear_lcd():
-    LCD = I2C_LCD_driver.lcd()
-    LCD.lcd_clear()
+                    string = "Temperature " % x
+                    display_lcd(string,1,1) # Lable the reading below
+                    string = str(previous_readings["feeds"][x]["field1"]) # creates string for LCD function
+                    display_lcd(string,2,2) # LCD dislays temperature
+                    time.sleep(2)
 
+                    string = "Humidity " % x
+                    display_lcd(string,1,1) # Lable the reading below
+                    string = str(previous_readings["feeds"][x]["field2"])
+                    display_lcd(string,2,2) # LCD displays humidity
+                    time.sleep(2)
+            elif key == '3':
+                # Something about turning the whole thing off.
+                print("Turn the whole system off")
 ##########################################################################################################
 # Telegram Bot
 # 7443228939:AAH1Yc_Zb4LpH_naJC1o2TbbKj_zCaBU-2I
 # telegram_bot()
-
 ##########################################################################################################
 # Main function that holds essentially all the code
 def main():
     if system_status == 1:
         # Declaring the Threads
         ac_timer_thread = threading.Thread(target=airconditioner_timer)  # Thread for the airconditioner_timer function
-        keypad_interrupt_thread = threading.Thread(target=keypad_interrupt)  # Thread for the keypad_interrupt function
+        keypad_interrupt_thread = threading.Thread(target=keypad_interupt)  # Thread for the keypad_interrupt function
         upload_data_thread = threading.Thread(target=upload_data)
 
         # Starting up the Threads
@@ -179,34 +242,11 @@ def main():
         time.sleep(20)
         clear_lcd()
 
-
-        # Shows previous readings
-        resp=requests.get("https://api.thingspeak.com/channels/2591947/feeds.json?api_key=XUXD1E5DUX4K5W4T&results=2")  
-        print(resp.text)
-        previous_readings = json.loads(resp.text) # Converts the downloaded data from the cloud from json
-        # Prints into the terminal / serial monitor
-        for x in range(10):
-            print("Previous Reading ",x,": temperature =",previous_readings["feeds"][x]["field1"],", humidity =",previous_readings["feeds"][x]["field2"])
-
-            string = "Temperature " % x
-            display_lcd(string,1,1) # Lable the reading below
-            string = str(previous_readings["feeds"][x]["field1"]) # creates string for LCD function
-            display_lcd(string,2,2) # LCD dislays temperature
-            time.sleep(2)
-
-            string = "Humidity " % x
-            display_lcd(string,1,1) # Lable the reading below
-            string = str(previous_readings["feeds"][x]["field2"])
-            display_lcd(string,2,2) # LCD displays humidity
-            time.sleep(2)
-
 ##########################################################################################################
 
 # Code Starts here
 if __name__ == "__main__":
-    #app.run(debug=True,host='0.0.0.0') #0.0.0.0 -> Any device in the network can access the app
     flask_thread = threading.Thread(target=app.run, kwargs={'debug': True, 'host': '0.0.0.0'})
     flask_thread.start()
     main()
 
-    
