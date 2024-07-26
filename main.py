@@ -18,34 +18,19 @@ from telegrambot import telegram_bot
 ##########################################################################################################
 # Set up
 # Set up the DHT sensor
-DHT_SENSOR = Adafruit_DHT.DHT22
-DHT_PIN = 4  # GPIO pin where the DHT sensor is connected
+DHT_SENSOR = Adafruit_DHT.DHT11
+DHT_PIN = 21  # GPIO pin where the DHT sensor is connected
 
 # Website
 app=Flask(__name__)
 
 # Set up the GPIO for the LED
-LED_PIN = 27
+LED_PIN = 24
 GPIO.setmode(GPIO.BCM)
 GPIO.setup(LED_PIN, GPIO.OUT)
 GPIO.output(LED_PIN, GPIO.LOW)
 
 BUZZER_PIN = 18
-
-# Keypad setup
-ROWS = [18, 23, 24, 25]  # GPIO pins for the rows
-COLS = [4, 17, 27, 22]   # GPIO pins for the columns
-keys = [['1', '2', '3', 'A'],
-    ['4', '5', '6', 'B'],
-    ['7', '8', '9', 'C'],
-    ['*', '0', '#', 'D']]
-
-for row in ROWS:
-    GPIO.setup(row, GPIO.OUT)
-    GPIO.output(row, GPIO.HIGH) 
-
-for col in COLS:
-    GPIO.setup(col, GPIO.IN, pull_up_down=GPIO.PUD_UP)
 
 ##########################################################################################################
 # Variables 
@@ -126,19 +111,32 @@ def clear_lcd():
 
 
 def get_key():
-    key_pressed = None
-    for row in range(4):
-        GPIO.output(ROWS[row], GPIO.LOW)
-        for col in range(4):
-            if GPIO.input(COLS[col]) == 0:
-                key_pressed = keys[row][col]
-                while GPIO.input(COLS[col]) == 0:
-                    sleep(0.1)
-                break
-        GPIO.output(ROWS[row], GPIO.HIGH)
-        if key_pressed:
-            break
-    return key_pressed
+    MATRIX=[ [1,2,3],
+            [4,5,6],
+            [7,8,9],
+            ['*',0,'#']] #layout of keys on keypad
+    ROW=[6,20,19,13] #row pins
+    COL=[12,5,16] #column pins
+
+    #set column pins as outputs, and write default value of 1 to each
+    for i in range(3):
+        GPIO.setup(COL[i],GPIO.OUT)
+        GPIO.output(COL[i],1)
+
+    #set row pins as inputs, with pull up
+    for j in range(4):
+        GPIO.setup(ROW[j],GPIO.IN,pull_up_down=GPIO.PUD_UP)
+
+    #scan keypad
+    while (True):
+        for i in range(3): #loop thru’ all columns
+            GPIO.output(COL[i],0) #pull one column pin low
+            for j in range(4): #check which row pin becomes low
+                if GPIO.input(ROW[j])==0: #if a key is pressed
+                    print (MATRIX[j][i]) #print the key pressed
+                    while GPIO.input(ROW[j])==0: #debounce
+                        sleep(0.1)
+            GPIO.output(COL[i],1) #write back default value of 1
 
 
 ##########################################################################################################
@@ -153,9 +151,10 @@ def airconditioner_timer():
         humidity, temperature = Adafruit_DHT.read(DHT_SENSOR, DHT_PIN)
 
         # Checks if the DHT Sensor Successfully reads the Humidity and the Temperature
-        if humidity is not None and temperature is not None:\
+        if humidity is not None and temperature is not None:
             #Prints out the Humidity and the Temperature inside of the terminal / Serial Monitor
-            print(f"Humidity: {humidity:.2f}%, Temperature: {temperature:.2f}°C")        
+            print(f"Humidity: {humidity:.2f}%, Temperature: {temperature:.2f}°C")   
+            upload_data()     
 
             #Calls on the function to check if the airconditioner is on
             if is_air_conditioner_on(humidity, temperature):
@@ -177,55 +176,63 @@ def airconditioner_timer():
 
         else:
             print("Failed to retrieve data from humidity sensor")
-        time.sleep(2)  # Wait for 2 seconds before the next reading
+        time.sleep(20)  # Wait for 2 seconds before the next reading
 
 # Upload_Data_Thread
 def upload_data():
     # Upload data to thinkspeak
-    while 1:
-        humidity, temperature = Adafruit_DHT.read(DHT_SENSOR, DHT_PIN)
-        resp = requests.get("https://api.thingspeak.com/update?api_key=Q5WYV1VLWZQGPWBR&field1=0",format(temperature,humidity))
-        time.sleep(20) # Need to sleep for at least 20
+    humidity, temperature = Adafruit_DHT.read(DHT_SENSOR, DHT_PIN)
+    resp = requests.get("https://api.thingspeak.com/update?api_key=Q5WYV1VLWZQGPWBR&field1=0",format(temperature,humidity))
+    # time.sleep(20) # Need to sleep for at least 20
 
 # Keypad_Interrupt_Thread
 def keypad_interupt():
     # Display initial message
-  
-    for i in range(10):
-        display_lcd("Press 1 for elapsed time", 1, 1)
-        display_lcd("Press 2 for humidity and temperature", 2, 2)
-        sleep(5)
-        display_lcd("Press 3 for On/OFF", 1, 1)
-        sleep(5)
+
         
     while True:
-        key = get_key()
-        if key:
-            if key == '1':
-                display_lcd(str(elapsed_time,1,1))
-            elif key == '2':
-                 # Shows previous readings
-                resp=requests.get("https://api.thingspeak.com/channels/2591947/feeds.json?api_key=XUXD1E5DUX4K5W4T&results=2")  
-                print(resp.text)
-                previous_readings = json.loads(resp.text) # Converts the downloaded data from the cloud from json
-                # Prints into the terminal / serial monitor
-                for x in range(10):
-                    print("Previous Reading ",x,": temperature =",previous_readings["feeds"][x]["field1"],", humidity =",previous_readings["feeds"][x]["field2"])
+         
+        for i in range(10):
+            display_lcd("Press 1 for elapsed time", 1, 0)
+            display_lcd("Press 2 for humidity and temperature", 2, 0)
+            sleep(5)
+            display_lcd("Press 3 for On/OFF", 1, 0)
+            sleep(5)
+            key = get_key()
+            if key:
+                if key == '1':
+                    display_lcd(str(elapsed_time,1,0))
+                elif key == '2':
+                    # Shows previous readings
+                    resp=requests.get("https://api.thingspeak.com/channels/2591947/feeds.json?api_key=XUXD1E5DUX4K5W4T&results=2")  
+                    print(resp.text)
+                    previous_readings = json.loads(resp.text) # Converts the downloaded data from the cloud from json
+                    # Prints into the terminal / serial monitor
+                    for x in range(10):
+                        print("Previous Reading ",x,": temperature =",previous_readings["feeds"][x]["field1"],", humidity =",previous_readings["feeds"][x]["field2"])
 
-                    string = "Temperature " % x
-                    display_lcd(string,1,1) # Lable the reading below
-                    string = str(previous_readings["feeds"][x]["field1"]) # creates string for LCD function
-                    display_lcd(string,2,2) # LCD dislays temperature
-                    time.sleep(2)
+                        string = "Temperature " % x
+                        display_lcd(string,1,0) # Lable the reading below
+                        string = str(previous_readings["feeds"][x]["field1"]) # creates string for LCD function
+                        display_lcd(string,2,0) # LCD dislays temperature
+                        time.sleep(2)
 
-                    string = "Humidity " % x
-                    display_lcd(string,1,1) # Lable the reading below
-                    string = str(previous_readings["feeds"][x]["field2"])
-                    display_lcd(string,2,2) # LCD displays humidity
-                    time.sleep(2)
-            elif key == '3':
-                # Something about turning the whole thing off.
-                print("Turn the whole system off")
+                        string = "Humidity " % x
+                        display_lcd(string,1,0) # Lable the reading below
+                        string = str(previous_readings["feeds"][x]["field2"])
+                        display_lcd(string,2,0) # LCD displays humidity
+                        time.sleep(2)
+                elif key == '3':                       # On / Off toggle button
+                    global system_status
+                    if system_status == 1:
+                        system_status = 0
+                        display_lcd("System OFF",1,0)
+                        print("Turn the whole system off")
+                    elif system_status == 0:
+                        system_status = 1
+                        display_lcd("System ON",1,0)
+                        print("Turn the whole system on")
+                
 ##########################################################################################################
 # Telegram Bot
 # 7443228939:AAH1Yc_Zb4LpH_naJC1o2TbbKj_zCaBU-2I
@@ -237,12 +244,12 @@ def main():
         # Declaring the Threads
         ac_timer_thread = threading.Thread(target=airconditioner_timer)  # Thread for the airconditioner_timer function
         keypad_interrupt_thread = threading.Thread(target=keypad_interupt)  # Thread for the keypad_interrupt function
-        upload_data_thread = threading.Thread(target=upload_data)
+        # upload_data_thread = threading.Thread(target=upload_data)
 
         # Starting up the Threads
         ac_timer_thread.start()
         keypad_interrupt_thread.start()
-        upload_data_thread.start()
+        # upload_data_thread.start()
 
     
     elif system_status == 0:
