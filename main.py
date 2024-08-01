@@ -10,6 +10,7 @@ import threading
 import requests
 import I2C_LCD_driver 
 import json
+import queue
 
 from flask import Flask, render_template,request,url_for
 
@@ -20,6 +21,9 @@ from telegrambot import telegram_bot
 # Set up the DHT sensor
 DHT_SENSOR = Adafruit_DHT.DHT11
 DHT_PIN = 21  # GPIO pin where the DHT sensor is connected
+
+# Set up for Keypad
+LCD = I2C_LCD_driver.lcd()
 
 # Website
 app=Flask(__name__)
@@ -99,16 +103,11 @@ def exceeded_useage():
         GPIO(BUZZER_PIN,GPIO.HIGH)
         sleep(5)
 
-    
-def display_lcd(string,pos1,pos2):
-    LCD = I2C_LCD_driver.lcd() #instantiate an lcd object, call it LCD
-    LCD.backlight(1) #turn backlight on
-    LCD.lcd_display_string(string, pos1,pos2)
+# Keypad stuff
+keypad_queue = queue.Queue()
 
-def clear_lcd():
-    LCD = I2C_LCD_driver.lcd()
-    LCD.lcd_clear()
-
+def key_pressed(key):
+    keypad_queue.put(key)
 
 def get_key():
     MATRIX=[ [1,2,3],
@@ -179,8 +178,8 @@ def airconditioner_timer():
         time.sleep(20)  # Wait for 20 seconds before the next reading
 
     elapsed_time = time.time() - ac_on_start_time
-    display_lcd("Timer Stopped",1)
-    clear_lcd()
+    LCD.lcd_display_string("Timer Stopped",1)
+    LCD.lcd_clear()
 
 # Upload_Data_Thread
 def upload_data():
@@ -194,15 +193,19 @@ def keypad_interupt():
     # Display initial message
         
     while True:
-        display_lcd("Press 1 for elapsed time", 1)
-        display_lcd("Press 2 for humidity and temperature", 2)
+        LCD.lcd_display_string("Press 1 for elapsed time", 1)
+        LCD.lcd_display_string("Press 2 for humidity and temperature", 2)
         sleep(5)
-        display_lcd("Press 3 for On/OFF", 1)
+        LCD.lcd_display_string("Press 3 for On/OFF", 1)
         sleep(5)
-        key = get_key()
+        
+        key = None
+        while key not in [1, 2, 3]:
+            key = keypad_queue.get()
+
         if key:
             if key == '1':
-                display_lcd(str(elapsed_time,1))
+                LCD.lcd_display_string(str(elapsed_time,1))
             elif key == '2':
                 # Shows previous readings
                 resp=requests.get("https://api.thingspeak.com/channels/2591947/feeds.json?api_key=XUXD1E5DUX4K5W4T&results=2")  
@@ -213,25 +216,28 @@ def keypad_interupt():
                     print("Previous Reading ",x,": temperature =",previous_readings["feeds"][x]["field1"],", humidity =",previous_readings["feeds"][x]["field2"])
 
                     string = "Temperature " % x
-                    display_lcd(string,1) # Lable the reading below
-                    string = str(previous_readings["feeds"][x]["field1"]) # creates string for LCD function
-                    display_lcd(string,2) # LCD dislays temperature
+                    LCD.lcd_display_string(string,1) # Lable the reading below
+                    # string = str(previous_readings["feeds"][x]["field1"]) # creates string for LCD function
+                    LCD.lcd_display_string(str(previous_readings["feeds"][x]["field1"]),2) # LCD dislays temperature
                     time.sleep(2)
+                    LCD.lcd_clear()
 
                     string = "Humidity " % x
-                    display_lcd(string,1) # Lable the reading below
-                    string = str(previous_readings["feeds"][x]["field2"])
-                    display_lcd(string,2) # LCD displays humidity
+                    LCD.lcd_display_string(string,1) # Lable the reading below
+                    # string = str(previous_readings["feeds"][x]["field2"])
+                    LCD.lcd_display_string(str(previous_readings["feeds"][x]["field2"]),2) # LCD displays humidity
                     time.sleep(2)
+                    LCD.lcd_clear()
+
             elif key == '3':                       # On / Off toggle button
                 global system_status
                 if system_status == 1:
                     system_status = 0
-                    display_lcd("System OFF",1,0)
+                    LCD.lcd_display_string("System OFF",1)
                     print("Turn the whole system off")
                 elif system_status == 0:
                     system_status = 1
-                    display_lcd("System ON",1,0)
+                    LCD.lcd_display_string("System ON",1)
                     print("Turn the whole system on")
                 
 ##########################################################################################################
@@ -245,9 +251,12 @@ def main():
         # Declaring the Threads
         ac_timer_thread = threading.Thread(target=airconditioner_timer)  # Thread for the airconditioner_timer function
         keypad_interrupt_thread = threading.Thread(target=keypad_interupt)  # Thread for the keypad_interrupt function
+        keypad_thread = threading.Thread(target=get_key)
         
         ac_timer_thread.start()
         keypad_interrupt_thread.start()
+        keypad_thread.start()
+
 
 ##########################################################################################################
 
