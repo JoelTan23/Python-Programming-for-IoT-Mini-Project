@@ -283,14 +283,19 @@ def main():
         ac_timer_thread.start()
         # keypad_interrupt_thread.start()
         keypad_thread.start()
-
-
 ##########################################################################################################
+
+def app():
+    app.run(debug=True, host='0.0.0.0', port=5002)
+
 
 # Code Starts here
 if __name__ == "__main__":
-    # app.run(debug=True,host='0.0.0.0')
-    flask_thread = threading.Thread(target=app.run, kwargs={'debug': True, 'host': ',127.0.0.1'})
+    # app.run(debug=True,host='0.0.0.0', port='80')
+    # flask_thread = threading.Thread(target=app.run, kwargs={'debug': True, 'host': '0.0.0.0', 'port':'80'})
+    # flask_thread.start()
+    flask_thread = threading.Thread(target=app)
     flask_thread.start()
     main()
+
 
